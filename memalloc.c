@@ -1,9 +1,11 @@
-// unistd.h = UNIX standard header. Provides access to low-level OS services in C
+// unistd.h = UNIX standard header. Provides access to low-level OS services in 
+// C
 // Functions declared here are usually system calls or wrappers around them
 // sbrk(), read(), (write), etc,.
 #include <unistd.h>
 
-// string.h provides string and memory manipulation functions like memcpy(), memset(), memcmp()
+// string.h provides string and memory manipulation functions like memcpy(), 
+// memset(), memcmp()
 #include <string.h>
 
 // provides POSIX threads functions
@@ -23,7 +25,8 @@ union header {
     } s;
     // Force the header to be aligned to 16 bytes
     // Union in C dictates that all its members share the same memory location.
-    // Its total size and alignment requirement must be at least as large as the largest and most strictly aligned member within it.
+    // Its total size and alignment requirement must be at least as large as the
+    //  largest and most strictly aligned member within it.
     ALIGN stub;
 };
 
@@ -37,7 +40,8 @@ pthread_mutex_t global_malloc_lock; // Mutex lock
 header_t* get_free_block(size_t size) {
     header_t *curr = head;
     while (curr) {
-        // Identifying if there is a free block with enough size to accomodate requested size
+        // Identifying if there is a free block with enough size to accomodate 
+        // requested size
         if (curr->s.is_free && curr->s.size >= size) {
             return curr;
         }
@@ -46,3 +50,57 @@ header_t* get_free_block(size_t size) {
     return NULL;
 }
 
+// Implementation of free()
+void free(void *block) {
+    header_t *header, *tmp;
+    void* program_break;
+
+    if (!block) {
+        return;
+    }
+    pthread_mutex_lock(&global_malloc_lock); // Mutex lock
+    header = (header_t)*block - 1;
+
+    // program_break is the end address of the process's data segment
+    // sbrk(0) gives the current program break address
+    program_break = sbrk(0);
+
+    /* Check if the block to be freedis the last one in the list. If yes, then
+    simply shrink the size of the heap and release memory to OS. Else, keep
+    the block but mark as free. */
+    /* (char*)blocktakes the pointer to the start of the block and cast to char*
+    which allows pointer arithmetic in bytes*/
+    if ((char*)block + header->s.size == program_break)
+    {
+        if(head == tail)
+        {
+            head = tail = NULL;
+        }
+        else
+        {
+            tmp = head;
+            while (tmp) {
+                if(tmp->s.next == tail)
+                {
+                    tmp->s.next = NULL;
+                    tail= tmp;
+                }
+                tmp = tmp->s.next
+            }
+        }
+
+    }
+
+    /*
+    sbrk() with negative argument decrements the program break. So memory is
+    released by the program to the OS.
+    */
+    sbrk(0 - header->s.size - sizeof(header_t));
+    /*
+    The lock below isn't necessarily thread safe as sbrk() itself is not really
+    thread safe. Suppose there occurs a foreign sbrk(N) after we find the 
+    program breakand before we decrement it, then we end up releasing the 
+    memory obtained by the foreign sbrk().
+    */
+    pthread_mutex_unlock(&global_malloc_lock);
+}
